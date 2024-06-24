@@ -1,11 +1,14 @@
+use hashtable::{HMap, HNode, Link};
 use lazy_static::lazy_static;
 use mio::net::{TcpListener, TcpStream};
 use mio::{Events, Interest, Poll, Token};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io::{self, Error, ErrorKind, Read, Write};
+use std::rc::Rc;
 use std::sync::Mutex;
 use std::time::Duration;
-
+mod hashtable;
 const SERVER: Token = Token(0);
 const K_MAX_MSG: usize = 4096;
 const K_MAX_ARGS: usize = 1024;
@@ -148,8 +151,10 @@ impl Conn {
             }
         }
         println!("Successfully parsed!");
-
-        if cmd.len() == 2 && cmd_is(&cmd[0], "get") {
+        if(cmd.len()==1 && cmd_is(&cmd[0],"keys" )){
+            *rescode=self.do_keys(&cmd,wlen);
+        }
+        else if cmd.len() == 2 && cmd_is(&cmd[0], "get") {
             *rescode = self.do_get(&cmd, wlen);
         } else if cmd.len() == 3 && cmd_is(&cmd[0], "set") {
             *rescode = self.do_set(&cmd, wlen);
@@ -164,7 +169,12 @@ impl Conn {
 
         std::io::Result::Ok(())
     }
+    fn do_keys(&mut self,cmd:&Vec<String>,wlen:&mut usize)->u32{
 
+
+
+            4
+    }
     fn parse_req(&mut self, reqlen: usize, cmd: &mut Vec<String>) -> std::io::Result<()> {
         if reqlen < 8 {
             return Err(Error::new(io::ErrorKind::Other, "Bad request!"));
@@ -335,6 +345,39 @@ enum ErrorCode {
     RES_ERR = 1,
     RES_NX = 2,
 }
+
+enum Serialization{
+    SER_NIL = 0,    // Like `NULL`
+    SER_ERR = 1,    // An error code and message
+    SER_STR = 2,    // A string
+    SER_INT = 3,    // A int64
+    SER_ARR = 4,    // Array
+}
+
+fn out_nil(out:&mut String){
+    out.push((Serialization::SER_NIL as u8).into() );
+}
+// fn out_str(out:&String,val:&String){
+//     out.push(Serialization::SER_STR);
+//     match val.parse::<usize>() {
+//         Ok(len) => {
+
+
+
+//         }
+//         Err()=>{
+//             println!("Expected int got other");
+//         }
+
+        
+//     }
+
+// }
+
+
+
+
+
 
 fn main() -> std::io::Result<()> {
     let addr = "127.0.0.1:8080".parse().unwrap();
