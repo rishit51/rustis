@@ -20,7 +20,7 @@ This project implements a simple key-value store server (Redis) using Rust. It u
 ```
 cargo build --release
 ```
-Usage
+## Usage
 Start the server:
 
 ```
