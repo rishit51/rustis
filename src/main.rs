@@ -100,10 +100,19 @@ impl Conn {
         // got one request, generate the response
         println!("The client says {:?}", &self.rbuf[4..len + 4]);
 
-        let mut rescode = 0_u32;
-        let mut wlen = 0_usize;
 
-        match self.do_request(len, &mut rescode, &mut wlen) {
+        let mut cmd :Vec<String>=vec![];
+        match self.parse_req(len, &mut cmd) {
+            std::io::Result::Ok(_) => {}
+            Err(E) => {
+                println!("{:?}", E);
+                self.state=State::Closed;
+                return false;
+            }
+        }
+        let mut out:Vec<u8>=Vec::new();
+        println!("Successfully parsed!");
+        match self.do_request(&mut cmd,&mut out) {
             std::io::Result::Ok(_) => {}
 
             Err(_) => {
@@ -111,9 +120,17 @@ impl Conn {
                 return false;
             }
         }
-        wlen += 4;
+
+        if 4+out.len()>K_MAX_MSG{
+            out.clear();
+            self.out_err(&mut out, ErrorCode::RES_NX, &String::from("Response is too big"));
+        }
+
+
+
+        let wlen=out.len();
         self.wbuf[0..4].copy_from_slice(&(wlen as u32).to_le_bytes());
-        self.wbuf[4..8].copy_from_slice(&rescode.to_le_bytes());
+        self.wbuf[4..4+out.len()].copy_from_slice(&out);
 
         self.wbuf_size = 4 + wlen;
 
@@ -137,44 +154,85 @@ impl Conn {
 
     fn do_request(
         &mut self,
-        reqlen: usize,
-        rescode: &mut u32,
-        wlen: &mut usize,
+        cmd: &mut Vec<String>,
+        out: &mut Vec<u8>,
     ) -> std::io::Result<()> {
-        let mut cmd: Vec<String> = vec![];
-
-        match self.parse_req(reqlen, &mut cmd) {
-            std::io::Result::Ok(_) => {}
-            Err(E) => {
-                println!("{:?}", E);
-                return Err(Error::new(io::ErrorKind::Other, "Bad request!"));
-            }
-        }
-        println!("Successfully parsed!");
+        
         if(cmd.len()==1 && cmd_is(&cmd[0],"keys" )){
-            *rescode=self.do_keys(&cmd,wlen);
+           self.do_keys(cmd,out);
         }
         else if cmd.len() == 2 && cmd_is(&cmd[0], "get") {
-            *rescode = self.do_get(&cmd, wlen);
+            self.do_get(cmd, out);
         } else if cmd.len() == 3 && cmd_is(&cmd[0], "set") {
-            *rescode = self.do_set(&cmd, wlen);
+             self.do_set(cmd, out);
         } else if cmd.len() == 2 && cmd_is(&cmd[0], "del") {
-            *rescode = self.do_del(&cmd, wlen);
+            self.do_del(cmd, out);
         } else {
-            *rescode = ErrorCode::RES_ERR as u32;
-            let message = b"Unknown CMD";
-            self.wbuf[8..19].copy_from_slice(message);
-            *wlen = message.len();
+            self.out_err(out,ErrorCode::RES_ERR,&String::from("Unknown CMD"));
         }
 
         std::io::Result::Ok(())
     }
-    fn do_keys(&mut self,cmd:&Vec<String>,wlen:&mut usize)->u32{
+    fn do_keys(&mut self,cmd:&Vec<String>,out: &mut Vec<u8>){
+        let map=G_MAP.lock().unwrap();
+        let len=map.len();
+        let keys=map.keys();
+        self.out_arr(out,len);
+        for key in keys{
+            self.out_str(out,key);
+        }
 
-
-
-            4
     }
+    fn out_arr(&mut self,out: &mut Vec<u8>,len:usize){
+        out.push(Serialization::SER_ARR as u8);
+        out.extend((len as u32).to_le_bytes());
+    }
+    fn out_err(&mut self,out:&mut Vec<u8>,err:ErrorCode,msg:&String){
+        out.push(Serialization::SER_ERR as u8);
+        out.extend((err as u32).to_le_bytes());
+        let len=msg.as_bytes().len();
+        out.extend((len as u32).to_le_bytes());
+        out.extend(msg.as_bytes());
+
+    }
+    fn out_int(&mut self,out: &mut Vec<u8>,n:u32){
+        out.push(Serialization::SER_INT as u8);
+        out.extend((n).to_le_bytes());
+    }
+    fn out_str(&mut self,out: &mut Vec<u8>,s:&String){
+        out.push(Serialization::SER_STR as u8);
+        let len=s.as_bytes().len();
+        out.extend((len as u32).to_le_bytes());
+        out.extend(s.as_bytes());
+    }
+    fn out_nil(&mut self,out: &mut Vec<u8>){
+        out.push(Serialization::SER_NIL as u8);
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     fn parse_req(&mut self, reqlen: usize, cmd: &mut Vec<String>) -> std::io::Result<()> {
         if reqlen < 8 {
             return Err(Error::new(io::ErrorKind::Other, "Bad request!"));
@@ -222,36 +280,37 @@ impl Conn {
 
         Ok(())
     }
-    fn do_get(&mut self, cmd: &Vec<String>, wlen: &mut usize) -> u32 {
+    fn do_get(&mut self, cmd: &Vec<String>, out: &mut Vec<u8>)  {
         let map = G_MAP.lock().unwrap();
 
-        if !map.contains_key(&cmd[1]) {
-            println!("No value found for key{}", &cmd[1]);
-            println!("{:?}", map);
-            return ErrorCode::RES_NX as u32;
-        }
+        
         let val = map.get(&cmd[1]);
         if val.is_none() {
-            return ErrorCode::RES_NX as u32;
+            self.out_nil(out);
+            return;
         }
         let val = val.unwrap();
-        let val = val.as_bytes();
-        self.wbuf[8..8 + val.len()].copy_from_slice(val);
-        *wlen = val.len();
-        return ErrorCode::RES_OK as u32;
+        self.out_str(out,val);
+        return;
     }
 
-    fn do_set(&mut self, cmd: &Vec<String>, wlen: &mut usize) -> u32 {
+    fn do_set(&mut self, cmd: &Vec<String>, out: &mut Vec<u8>)  {
         let mut map = G_MAP.lock().unwrap();
-
         map.insert(cmd[1].clone(), cmd[2].clone());
-        return ErrorCode::RES_OK as u32;
+        self.out_nil(out);
+        return;
     }
 
-    fn do_del(&mut self, cmd: &Vec<String>, wlen: &mut usize) -> u32 {
+    fn do_del(&mut self, cmd: &Vec<String>, out: &mut Vec<u8>)  {
         let mut map = G_MAP.lock().unwrap();
-        map.remove(&cmd[1]);
-        return ErrorCode::RES_OK as u32;
+        let v=map.remove(&cmd[1]);
+        if v.is_none() {
+            self.out_int(out,0);
+        }
+        else{
+            self.out_int(out,1);
+        }
+        return;
     }
 
     fn state_res(&mut self) {
@@ -354,25 +413,7 @@ enum Serialization{
     SER_ARR = 4,    // Array
 }
 
-fn out_nil(out:&mut String){
-    out.push((Serialization::SER_NIL as u8).into() );
-}
-// fn out_str(out:&String,val:&String){
-//     out.push(Serialization::SER_STR);
-//     match val.parse::<usize>() {
-//         Ok(len) => {
 
-
-
-//         }
-//         Err()=>{
-//             println!("Expected int got other");
-//         }
-
-        
-//     }
-
-// }
 
 
 
