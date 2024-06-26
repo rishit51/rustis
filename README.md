@@ -27,6 +27,12 @@ Start the server:
 cargo run --release
 ```
 2. Connect clients to 127.0.0.1:8080 (default address and port).
+  ```
+rustc client.rs
+./client <command> <args>
+
+  ```
+  
 
 3. Use a TCP client to send commands (e.g., get, set, del, keys) to interact with the server.
 
